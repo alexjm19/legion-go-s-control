@@ -18,7 +18,9 @@ import os
 import subprocess
 
 import decky
+from fan_curve import FanCurve
 from performance import Performance
+from power_led import PowerLED
 from touchpad_bridge import TouchpadBridge
 
 LED_GLOB = "/sys/class/leds/go_s:rgb:joystick_rings"
@@ -36,11 +38,13 @@ DEFAULTS = {
     "charge_mode": None,  # None = don't touch what the firmware has
     "server_mode": False,
     "led": None,  # None = don't touch; otherwise dict, see set_led
+    "power_led": None,  # None = don't touch the EC; True/False = on/off
+    "fan_curve": None,  # None = firmware default; {"points": [...10 ints]}
     # Absolute mode sends no data on some units, and nothing consumes the
     # relative report, hence the bridge (see py_modules/touchpad_bridge.py).
     "touchpad": {"enabled": True, "mode": "relative", "bridge": True, "sensitivity": 1.0},
     # None in any key = leave that knob to Steam / the system.
-    "perf": {"boost": None, "epp": None, "gpu_max": None},
+    "perf": {"boost": None, "epp": None, "gpu_max": None, "tdp": None},
 }
 
 
@@ -125,6 +129,8 @@ class Plugin:
     settings = dict(DEFAULTS)
     bridge = None
     perf = None
+    power_led = None
+    fan = None
 
     # ------------------------------------------------------------ persistence
     def _settings_path(self):
@@ -190,17 +196,49 @@ class Plugin:
         if _sleep_masked() != want:
             _set_sleep_masked(want)
 
-    def _apply_perf(self):
+    def _apply_perf(self, apply_tdp=True):
         if self.perf is None:
             self.perf = Performance(decky.logger)
-        self.perf.apply(self.settings.get("perf"))
+        self.perf.apply(self.settings.get("perf"), apply_tdp=apply_tdp)
 
-    def _apply_all(self):
-        for fn in (self._apply_charge, self._apply_led, self._apply_touchpad, self._apply_server, self._apply_perf):
+    def _apply_power_led(self):
+        want = self.settings.get("power_led")
+        if want is None:
+            return
+        if self.power_led is None:
+            self.power_led = PowerLED(decky.logger)
+        if not self.power_led.apply(bool(want)):
+            decky.logger.warning("power LED: could not apply the requested state")
+
+    def _apply_fan_curve(self):
+        cfg = self.settings.get("fan_curve")
+        if not cfg:
+            return
+        points = cfg.get("points") if isinstance(cfg, dict) else cfg
+        if self.fan is None:
+            self.fan = FanCurve(decky.logger)
+        applied = self.fan.apply(points)
+        if applied:
+            # Keep the sanitized curve in memory so the UI and the next set
+            # agree with what the firmware accepted.
+            self.settings["fan_curve"] = {"points": applied}
+
+    def _apply_all(self, apply_tdp=True):
+        for fn in (
+            self._apply_charge,
+            self._apply_led,
+            self._apply_touchpad,
+            self._apply_server,
+            self._apply_power_led,
+        ):
             try:
                 fn()
             except Exception as e:  # never let one subsystem break the others
                 decky.logger.exception(f"{fn.__name__}: {e}")
+        try:
+            self._apply_perf(apply_tdp)
+        except Exception as e:
+            decky.logger.exception(f"_apply_perf: {e}")
 
     # ------------------------------------------------------------ API (frontend)
     async def get_state(self):
@@ -254,6 +292,18 @@ class Plugin:
         else:
             state["touchpad"] = {"available": False}
 
+        if self.power_led is None:
+            self.power_led = PowerLED(decky.logger)
+        state["power_led"] = {
+            "available": self.power_led.available(),
+            "on": self.power_led.state(),
+            "backend": self.power_led.backend,
+        }
+
+        if self.fan is None:
+            self.fan = FanCurve(decky.logger)
+        state["fan_curve"] = self.fan.state()
+
         state["server"] = {"sleep_blocked": _sleep_masked()}
         if self.perf is None:
             self.perf = Performance(decky.logger)
@@ -284,12 +334,35 @@ class Plugin:
         self._apply_led()
         return await self.get_state()
 
-    async def set_perf(self, boost=None, epp=None, gpu_max=None):
+    async def set_power_led(self, enabled):
+        self.settings["power_led"] = bool(enabled)
+        self._save()
+        self._apply_power_led()
+        return await self.get_state()
+
+    async def set_fan_curve(self, points):
+        if not points:
+            self.settings["fan_curve"] = None
+            self._save()
+            if self.fan is None:
+                self.fan = FanCurve(decky.logger)
+            self.fan.reset()
+            return await self.get_state()
+        if self.fan is None:
+            self.fan = FanCurve(decky.logger)
+        applied = self.fan.apply(points)
+        if applied:
+            self.settings["fan_curve"] = {"points": applied}
+            self._save()
+        return await self.get_state()
+
+    async def set_perf(self, boost=None, epp=None, gpu_max=None, tdp=None):
         old = self.settings.get("perf") or {}
         self.settings["perf"] = {
             "boost": None if boost is None else bool(boost),
             "epp": epp or None,
             "gpu_max": int(gpu_max) if gpu_max else None,
+            "tdp": int(tdp) if tdp else None,
         }
         self._save()
         new = self.settings["perf"]
@@ -300,6 +373,7 @@ class Plugin:
             bool(old.get("epp")) and not new["epp"],
         )
         self._apply_perf()
+        self._apply_fan_curve()
         return await self.get_state()
 
     async def set_touchpad(self, enabled, mode, bridge=True, sensitivity=1.0):
@@ -319,12 +393,16 @@ class Plugin:
         # re-enumerates; writes are skipped when the value already matches.
         while True:
             await asyncio.sleep(REAPPLY_EVERY_S)
-            self._apply_all()
+            self._apply_all(apply_tdp=False)
 
     async def _main(self):
         self._load()
         decky.logger.info(f"Legion Go S Control loaded: {self.settings}")
         self._apply_all()
+        try:
+            self._apply_fan_curve()
+        except Exception as e:
+            decky.logger.exception(f"_apply_fan_curve: {e}")
         self._task = asyncio.get_event_loop().create_task(self._reapply_loop())
 
     async def _unload(self):
@@ -333,6 +411,12 @@ class Plugin:
             task.cancel()
         if self.bridge:
             self.bridge.stop()
+        if self.power_led:
+            self.power_led.close()
+            self.power_led = None
+        if self.fan:
+            self.fan.close()
+            self.fan = None
         # Never leave the machine unable to sleep once the plugin is gone.
         if _sleep_masked():
             _set_sleep_masked(False)
@@ -340,3 +424,14 @@ class Plugin:
     async def _uninstall(self):
         if _sleep_masked():
             _set_sleep_masked(False)
+        # Leave the hardware in its default state when the plugin is removed.
+        if self.fan is None:
+            self.fan = FanCurve(decky.logger)
+        self.fan.reset()
+        self.fan.close()
+        self.fan = None
+        if self.power_led is None:
+            self.power_led = PowerLED(decky.logger)
+        self.power_led.apply(True)
+        self.power_led.close()
+        self.power_led = None

@@ -13,43 +13,14 @@ import { callable, definePlugin } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaGamepad } from "react-icons/fa";
 import { t } from "./i18n";
-import { PerfCfg, PerfState, PerformanceSection } from "./Performance";
-
-type Rgb = [number, number, number];
-
-interface LedCfg {
-  enabled: boolean;
-  effect: string;
-  color: Rgb;
-  brightness: number;
-  speed: number;
-}
-
-interface State {
-  settings: {
-    charge_mode: string | null;
-    server_mode: boolean;
-    touchpad?: { sensitivity?: number } | null;
-    perf?: PerfCfg;
-  };
-  battery: {
-    available: boolean;
-    mode?: string;
-    modes?: string[];
-    capacity?: number;
-    status?: string;
-    power_w?: number | null;
-    ac?: boolean | null;
-  };
-  led: { available: boolean; effects?: string[] } & Partial<LedCfg>;
-  touchpad: { available: boolean; enabled?: boolean; mode?: string; modes?: string[]; bridge?: boolean };
-  server: { sleep_blocked: boolean };
-  perf: PerfState;
-}
+import { FanCurveSection } from "./FanCurve";
+import { PerformanceSection } from "./Performance";
+import { LedCfg, Rgb, State } from "./types";
 
 const getState = callable<[], State>("get_state");
 const setChargeMode = callable<[mode: string], State>("set_charge_mode");
 const setServerMode = callable<[enabled: boolean], State>("set_server_mode");
+const setPowerLed = callable<[enabled: boolean], State>("set_power_led");
 const setLed = callable<
   [enabled: boolean, effect: string, color: Rgb, brightness: number, speed: number],
   State
@@ -209,9 +180,26 @@ function Content() {
 
       <PerformanceSection
         perf={s.perf}
-        cfg={s.settings.perf ?? { boost: null, epp: null, gpu_max: null }}
+        cfg={s.settings.perf ?? { boost: null, epp: null, gpu_max: null, tdp: null }}
         onState={setS}
       />
+
+      <FanCurveSection fan={s.fan_curve} onState={setS} />
+
+      <PanelSection title={t("powerLed")}>
+        {s.power_led.available ? (
+          <PanelSectionRow>
+            <ToggleField
+              label={t("powerLedOn")}
+              description={s.power_led.on ? t("powerLedOnDesc") : t("powerLedOffDesc")}
+              checked={!!s.power_led.on}
+              onChange={async (on) => setS(await setPowerLed(on))}
+            />
+          </PanelSectionRow>
+        ) : (
+          <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>
+        )}
+      </PanelSection>
 
       <PanelSection title={t("leds")}>
         {s.led.available && led ? (

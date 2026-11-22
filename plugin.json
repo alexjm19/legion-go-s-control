@@ -7,12 +7,15 @@
   "api_version": 1,
   "publish": {
     "tags": [
-      "root",
-      "legion-go-s",
       "battery",
-      "rgb"
+      "fan-curve",
+      "legion-go-s",
+      "power-led",
+      "rgb",
+      "root",
+      "tdp"
     ],
-    "description": "Battery charge limit (80% + bypass), server mode, stick RGB and touchpad for the Lenovo Legion Go S.",
+    "description": "Battery charge limit (80% + bypass), server mode, stick RGB, power-button LED, TDP, fan curve and touchpad for the Lenovo Legion Go S.",
     "image": "https://opengraph.githubassets.com/1/alexjm19/legion-go-s-control"
   }
 }

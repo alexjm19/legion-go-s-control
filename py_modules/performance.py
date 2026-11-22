@@ -18,6 +18,12 @@ import time
 
 BOOST = "/sys/devices/system/cpu/cpufreq/boost"
 
+# Lenovo WMI "other" firmware attributes. A single TDP value is written to all
+# three limits, which is how Legion tools (e.g. SimpleDeckyTDP) define TDP.
+FW_ATTRS = "/sys/class/firmware-attributes/lenovo-wmi-other-0/attributes"
+TDP_ATTRS = ("ppt_pl3_fppt", "ppt_pl2_sppt", "ppt_pl1_spl")
+TDP_SUSTAINED = "ppt_pl1_spl"
+
 
 def _read(p):
     try:
@@ -75,6 +81,37 @@ def gpu_od():
     return cur_max, rmin, rmax
 
 
+def _int_file(path):
+    value = _read(path)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _tdp_available():
+    return all(
+        os.path.exists(f"{FW_ATTRS}/{attr}/current_value") for attr in TDP_ATTRS
+    )
+
+
+def tdp_range():
+    """Return the (min, max) sustained TDP in watts declared by the firmware."""
+    return (
+        _int_file(f"{FW_ATTRS}/{TDP_SUSTAINED}/min_value"),
+        _int_file(f"{FW_ATTRS}/{TDP_SUSTAINED}/max_value"),
+    )
+
+
+def _platform_profile_path():
+    for dev in glob.glob("/sys/class/platform-profile/*"):
+        if _read(os.path.join(dev, "name")) == "lenovo-wmi-gamezone":
+            path = os.path.join(dev, "profile")
+            if os.path.exists(path):
+                return path
+    return None
+
+
 class Performance:
     def __init__(self, logger):
         self.log = logger
@@ -110,6 +147,8 @@ class Performance:
         tctl = _read(f"{k10}/temp1_input") if k10 else None
         cur, rmin, rmax = gpu_od()
         dev = _gpu_dev()
+        tdp_min, tdp_max = tdp_range()
+        profile_path = _platform_profile_path()
         return {
             "available": bool(pol),
             "boost": _read(BOOST) == "1" if os.path.exists(BOOST) else None,
@@ -118,13 +157,24 @@ class Performance:
             "gpu_level": _read(f"{dev}/power_dpm_force_performance_level") if dev else None,
             "gpu_max": cur,
             "gpu_range": [rmin, rmax],
+            "tdp": _int_file(f"{FW_ATTRS}/{TDP_SUSTAINED}/current_value"),
+            "tdp_range": [tdp_min, tdp_max],
+            "tdp_available": _tdp_available(),
+            "tdp_profile": _read(profile_path) if profile_path else None,
             "watts": self.watts,
             "temp": round(int(tctl) / 1000) if tctl else None,
         }
 
     # -------------------------------------------------------------- apply
-    def apply(self, cfg):
-        """cfg keys: boost (bool|None), epp (str|None), gpu_max (int|None)."""
+    def apply(self, cfg, apply_tdp=True):
+        """cfg keys: boost (bool|None), epp (str|None), gpu_max (int|None),
+        tdp (int|None).
+
+        ``apply_tdp=False`` is used by the periodic re-apply loop: Steam and
+        PowerStation also write the TDP, and re-asserting it every few seconds
+        would make their sliders unusable. The user change and plugin load do
+        apply it.
+        """
         if not cfg:
             return
         if cfg.get("boost") is not None and os.path.exists(BOOST):
@@ -138,6 +188,55 @@ class Performance:
                 if _read(f) != epp:
                     _write(f, epp)
         self._apply_gpu(cfg.get("gpu_max"))
+        if apply_tdp and cfg.get("tdp") is not None:
+            self.set_tdp(cfg["tdp"])
+
+    def set_tdp(self, watts):
+        """Set one TDP for the whole APU: PL1 = PL2 = PL3.
+
+        Lenovo's firmware only honours these attributes in the ``custom``
+        platform profile, so switch to it first. Returns True when all three
+        values read back as requested.
+        """
+        if not _tdp_available():
+            self.log.warning("TDP: firmware attributes not available")
+            return False
+        target = int(watts)
+        lo, hi = tdp_range()
+        if lo is not None:
+            target = max(lo, target)
+        if hi is not None:
+            target = min(hi, target)
+        profile = _platform_profile_path()
+        if profile and _read(profile) != "custom":
+            if not _write(profile, "custom"):
+                self.log.warning("TDP: could not switch platform profile to custom")
+            time.sleep(0.2)
+        for attempt in range(2):
+            for attr in TDP_ATTRS:
+                amin = _int_file(f"{FW_ATTRS}/{attr}/min_value")
+                amax = _int_file(f"{FW_ATTRS}/{attr}/max_value")
+                value = target
+                if amin is not None:
+                    value = max(amin, value)
+                if amax is not None:
+                    value = min(amax, value)
+                _write(f"{FW_ATTRS}/{attr}/current_value", value)
+                time.sleep(0.2)
+            time.sleep(0.35)
+            got = {
+                attr: _int_file(f"{FW_ATTRS}/{attr}/current_value")
+                for attr in TDP_ATTRS
+            }
+            if all(value == target for value in got.values()):
+                self.log.info(
+                    f"TDP set to {target} W (PL1=PL2=PL3, custom profile)"
+                )
+                return True
+            if attempt == 0:
+                self.log.info(f"TDP: firmware not settled yet ({got}), retrying")
+        self.log.warning(f"TDP: could not set {target} W, read {got}")
+        return False
 
     def _apply_gpu(self, mhz):
         dev = _gpu_dev()

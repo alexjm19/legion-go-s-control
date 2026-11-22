@@ -2,33 +2,19 @@ import { ButtonItem, DropdownItem, Field, PanelSection, PanelSectionRow, SliderF
 import { callable } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
+import { PerfCfg, PerfState, State } from "./types";
 
-export interface PerfCfg {
-  boost: boolean | null;
-  epp: string | null;
-  gpu_max: number | null;
-}
-
-export interface PerfState {
-  available: boolean;
-  boost: boolean | null;
-  epp: string | null;
-  epps: string[];
-  gpu_level: string | null;
-  gpu_max: number | null;
-  gpu_range: [number | null, number | null];
-  watts: number | null;
-  temp: number | null;
-}
-
-const setPerf = callable<[boost: boolean | null, epp: string | null, gpu_max: number | null], any>("set_perf");
+const setPerf = callable<
+  [boost: boolean | null, epp: string | null, gpu_max: number | null, tdp: number | null],
+  State
+>("set_perf");
 
 // Measured on a Legion Go S (Z2 Go) with tools/eff_bench.py — see README.
 // Z2 Go, 15 W limit: boost off halves package power at 25 % CPU load (15.4 → 7.7 W,
 // 70 → 50 °C) keeping 74 % of the throughput; at full load it costs ~3 %.
 // EPP "power" and GPU caps were measured to be *less* or not more efficient.
-export const SAVER: PerfCfg = { boost: false, epp: "balance_power", gpu_max: null };
-const UNTOUCHED: PerfCfg = { boost: null, epp: null, gpu_max: null };
+export const SAVER: Omit<PerfCfg, "tdp"> = { boost: false, epp: "balance_power", gpu_max: null };
+const RESET: PerfCfg = { boost: null, epp: null, gpu_max: null, tdp: null };
 
 const EPP_LABEL: Record<string, () => string> = {
   performance: () => t("eppPerformance"),
@@ -40,13 +26,19 @@ const EPP_LABEL: Record<string, () => string> = {
 export function PerformanceSection(props: {
   perf: PerfState;
   cfg: PerfCfg;
-  onState: (s: any) => void;
+  onState: (s: State) => void;
 }) {
   const { perf, onState } = props;
   const [cfg, setCfg] = useState<PerfCfg>(props.cfg);
   const [gpuMhz, setGpuMhz] = useState<number>(props.cfg.gpu_max ?? 1000);
+  const [tdpW, setTdpW] = useState<number>(props.cfg.tdp ?? props.perf.tdp ?? 15);
   const timer = useRef<number | undefined>(undefined);
+  const tdpTimer = useRef<number | undefined>(undefined);
   useEffect(() => setCfg(props.cfg), [JSON.stringify(props.cfg)]);
+  useEffect(() => {
+    if (props.cfg.tdp != null) setTdpW(props.cfg.tdp);
+    else if (props.perf.tdp != null) setTdpW(props.perf.tdp);
+  }, [props.cfg.tdp, props.perf.tdp]);
 
   if (!perf.available) {
     return (
@@ -58,7 +50,7 @@ export function PerformanceSection(props: {
 
   const push = async (next: PerfCfg) => {
     setCfg(next);
-    onState(await setPerf(next.boost, next.epp, next.gpu_max));
+    onState(await setPerf(next.boost, next.epp, next.gpu_max, next.tdp));
   };
 
   const [rmin, rmax] = perf.gpu_range;
@@ -79,9 +71,13 @@ export function PerformanceSection(props: {
           label={t("saverProfile")}
           description={t("saverDesc")}
           checked={isSaver}
-          onChange={(on) => {
-                        push(on ? SAVER : UNTOUCHED);
-          }}
+          onChange={(on) =>
+            push(
+              on
+                ? { ...cfg, boost: SAVER.boost, epp: SAVER.epp, gpu_max: SAVER.gpu_max }
+                : { ...cfg, boost: null, epp: null, gpu_max: null },
+            )
+          }
         />
       </PanelSectionRow>
       <PanelSectionRow>
@@ -133,8 +129,43 @@ export function PerformanceSection(props: {
           />
         </PanelSectionRow>
       )}
+      {perf.tdp_available ? (
+        <>
+          <PanelSectionRow>
+            <ToggleField
+              label={t("tdpControl")}
+              description={t("tdpDesc")}
+              checked={cfg.tdp != null}
+              onChange={(on) => push({ ...cfg, tdp: on ? tdpW : null })}
+            />
+          </PanelSectionRow>
+          {cfg.tdp != null && (
+            <PanelSectionRow>
+              <SliderField
+                label={t("tdpWatts")}
+                value={tdpW}
+                min={perf.tdp_range[0] ?? 5}
+                max={perf.tdp_range[1] ?? 40}
+                step={1}
+                showValue
+                onChange={(v) => {
+                  setTdpW(v);
+                  window.clearTimeout(tdpTimer.current);
+                  tdpTimer.current = window.setTimeout(() => push({ ...cfg, tdp: v }), 350);
+                }}
+              />
+            </PanelSectionRow>
+          )}
+        </>
+      ) : (
+        <PanelSectionRow>
+          <Field label={t("tdp")} bottomSeparator="none">
+            {t("notAvailable")}
+          </Field>
+        </PanelSectionRow>
+      )}
       <PanelSectionRow>
-        <ButtonItem layout="below" onClick={() => push(UNTOUCHED)}>
+        <ButtonItem layout="below" onClick={() => push(RESET)}>
           {t("perfReset")}
         </ButtonItem>
       </PanelSectionRow>
