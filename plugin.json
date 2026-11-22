@@ -15,7 +15,7 @@
       "root",
       "tdp"
     ],
-    "description": "Battery charge limit (80% + bypass), server mode, stick RGB, power-button LED, TDP, fan curve and touchpad for the Lenovo Legion Go S.",
+    "description": "Battery charge limit (80% + bypass), server mode, stick RGB, power-button LED, TDP, fan curve and touchpad for the Lenovo Legion Go S. Tested on Bazzite only.",
     "image": "https://opengraph.githubassets.com/1/alexjm19/legion-go-s-control"
   }
 }

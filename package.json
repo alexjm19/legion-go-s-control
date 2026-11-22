@@ -1,7 +1,7 @@
 {
   "name": "legion-go-s-control",
   "version": "0.5.0",
-  "description": "Decky plugin for the Lenovo Legion Go S: battery charge limit with bypass, server mode, stick RGB, power-button LED, TDP, fan curve and touchpad settings, using the kernel/firmware interfaces (works alongside InputPlumber).",
+  "description": "Decky plugin for the Lenovo Legion Go S: battery charge limit with bypass, server mode, stick RGB, power-button LED, TDP, fan curve and touchpad settings, using the kernel/firmware interfaces (works alongside InputPlumber; tested on Bazzite only).",
   "type": "module",
   "scripts": {
     "build": "rollup -c",

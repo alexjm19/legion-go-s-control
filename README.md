@@ -2,6 +2,8 @@
 
 A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin for the **Lenovo Legion Go S** that puts the things you used to set in Handheld Daemon (hhd) or Legion Space back into the Quick Access Menu. It works on distros that use **InputPlumber**, such as Bazzite or SteamOS.
 
+> **Tested on Bazzite only.** The tested machine is a Legion Go S 83Q2 running Bazzite `bazzite-deck` F45 with the OGC kernel `7.3.4-ogc8.1`. SteamOS and other distros/kernels are untested. The power-button LED, TDP and fan-curve paths are model/firmware-specific; the fan curve additionally enforces Lenovo's minimum safe values.
+
 | Section | What it does |
 |---|---|
 | **Battery** | One toggle for **80 % protection**. It charges slowly up to 80 %, then the device runs from the charger (bypass). You can also pick Standard or Fast charging. |
