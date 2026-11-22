@@ -9,5 +9,6 @@ npx -y pnpm@9 run build >/dev/null
 rm -rf out && mkdir -p "out/$NAME/dist"
 cp dist/index.js "out/$NAME/dist/"
 cp main.py plugin.json package.json LICENSE README.md "out/$NAME/"
+mkdir -p "out/$NAME/py_modules" && cp py_modules/*.py "out/$NAME/py_modules/"
 (cd out && zip -qr "$NAME-v$VER.zip" "$NAME")
 sha256sum "out/$NAME-v$VER.zip"

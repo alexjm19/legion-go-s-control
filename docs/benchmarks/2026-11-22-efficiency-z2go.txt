@@ -1,0 +1,39 @@
+13:01:56 === eff bench; saved {'boost': '1', 'epp': 'balance_performance'}; EPP options: default performance balance_performance balance_power power custom dynamic
+13:01:56 --- A) GPU cap, vkmark effect2d blur 1920x1080 (GPU-bound), 45 s each
+13:02:42   (last sclk ['2: 2200Mhz *'])
+13:02:42   gpu_max=auto(2200) MHz: score 1753  15.21 W  115 pts/W  Tmax 58C
+13:03:37   (last sclk ['2: 1600Mhz *'])
+13:03:37   gpu_max=1600 MHz: score 1747  15.18 W  115 pts/W  Tmax 58C
+13:04:32   (last sclk ['1: 400Mhz *'])
+13:04:32   gpu_max=1400 MHz: score 1746  15.18 W  115 pts/W  Tmax 58C
+13:05:28   (last sclk ['1: 400Mhz *'])
+13:05:28   gpu_max=1200 MHz: score 1728  15.18 W  114 pts/W  Tmax 58C
+13:06:24   (last sclk ['2: 1000Mhz *'])
+13:06:24   gpu_max=1000 MHz: score 1506  13.36 W  113 pts/W  Tmax 55C
+13:07:19   (last sclk ['2: 800Mhz *'])
+13:07:19   gpu_max=800 MHz: score 1207  11.61 W  104 pts/W  Tmax 52C
+13:08:14   (last sclk ['1: 400Mhz *'])
+13:08:14   gpu_max=600 MHz: score 910  9.80 W  93 pts/W  Tmax 50C
+13:08:24 --- B) CPU boost x EPP, stress-ng fft 8 threads, 40 s each
+13:09:05   load=25% boost=1 epp=balance_performance: 4828 bogo/s  15.40 W  313 bogo/J  Tmax 70C
+13:09:50   load=25% boost=1 epp=balance_power: 4661 bogo/s  15.43 W  302 bogo/J  Tmax 71C
+13:10:35   load=25% boost=1 epp=power: 2313 bogo/s  5.70 W  405 bogo/J  Tmax 50C
+13:11:20   load=25% boost=0 epp=balance_performance: 3553 bogo/s  7.69 W  462 bogo/J  Tmax 50C
+13:12:06   load=25% boost=0 epp=balance_power: 3530 bogo/s  7.67 W  460 bogo/J  Tmax 49C
+13:12:51   load=25% boost=0 epp=power: 2329 bogo/s  5.66 W  411 bogo/J  Tmax 45C
+13:13:36   load=50% boost=1 epp=balance_performance: 7916 bogo/s  15.26 W  519 bogo/J  Tmax 67C
+13:14:21   load=50% boost=1 epp=balance_power: 7854 bogo/s  15.33 W  512 bogo/J  Tmax 72C
+13:15:07   load=50% boost=1 epp=power: 7186 bogo/s  14.39 W  499 bogo/J  Tmax 71C
+13:15:52   load=50% boost=0 epp=balance_performance: 6602 bogo/s  10.68 W  618 bogo/J  Tmax 58C
+13:16:37   load=50% boost=0 epp=balance_power: 6637 bogo/s  10.77 W  616 bogo/J  Tmax 57C
+13:17:22   load=50% boost=0 epp=power: 6138 bogo/s  10.22 W  601 bogo/J  Tmax 56C
+13:18:07   load=100% boost=1 epp=balance_performance: 10345 bogo/s  15.05 W  687 bogo/J  Tmax 68C
+13:18:52   load=100% boost=1 epp=balance_power: 10133 bogo/s  15.24 W  665 bogo/J  Tmax 71C
+13:19:37   load=100% boost=1 epp=power: 9577 bogo/s  14.76 W  649 bogo/J  Tmax 71C
+13:20:22   load=100% boost=0 epp=balance_performance: 10007 bogo/s  14.58 W  686 bogo/J  Tmax 68C
+13:21:08   load=100% boost=0 epp=balance_power: 9897 bogo/s  14.56 W  680 bogo/J  Tmax 68C
+13:21:53   load=100% boost=0 epp=power: 9480 bogo/s  14.01 W  677 bogo/J  Tmax 67C
+13:21:58 --- C) idle 40 s
+13:22:38   idle boost=1: 3.44 W  Tmax 46C
+13:23:18   idle boost=0: 3.43 W  Tmax 40C
+13:23:18 === end; knobs restored

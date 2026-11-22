@@ -13,6 +13,7 @@ import { callable, definePlugin } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 import { FaGamepad } from "react-icons/fa";
 import { t } from "./i18n";
+import { PerfCfg, PerfState, PerformanceSection } from "./Performance";
 
 type Rgb = [number, number, number];
 
@@ -25,7 +26,12 @@ interface LedCfg {
 }
 
 interface State {
-  settings: { charge_mode: string | null; server_mode: boolean };
+  settings: {
+    charge_mode: string | null;
+    server_mode: boolean;
+    touchpad?: { sensitivity?: number } | null;
+    perf?: PerfCfg;
+  };
   battery: {
     available: boolean;
     mode?: string;
@@ -36,8 +42,9 @@ interface State {
     ac?: boolean | null;
   };
   led: { available: boolean; effects?: string[] } & Partial<LedCfg>;
-  touchpad: { available: boolean; enabled?: boolean; mode?: string; modes?: string[] };
+  touchpad: { available: boolean; enabled?: boolean; mode?: string; modes?: string[]; bridge?: boolean };
   server: { sleep_blocked: boolean };
+  perf: PerfState;
 }
 
 const getState = callable<[], State>("get_state");
@@ -47,7 +54,10 @@ const setLed = callable<
   [enabled: boolean, effect: string, color: Rgb, brightness: number, speed: number],
   State
 >("set_led");
-const setTouchpad = callable<[enabled: boolean, mode: string], State>("set_touchpad");
+const setTouchpad = callable<
+  [enabled: boolean, mode: string, bridge: boolean, sensitivity: number],
+  State
+>("set_touchpad");
 
 // Presets use the driver's 0-100 per-channel scale.
 const PRESETS: { name: string; color: Rgb }[] = [
@@ -104,6 +114,7 @@ function Content() {
   const refresh = async () => {
     const st = await getState();
     setS(st);
+    setSens(st.settings.touchpad?.sensitivity ?? 1);
     if (st.led.available) {
       setLedLocal({
         enabled: !!st.led.enabled,
@@ -120,6 +131,11 @@ function Content() {
     const id = window.setInterval(async () => setS(await getState()), 5000);
     return () => window.clearInterval(id);
   }, []);
+
+  const [sens, setSens] = useState(1);
+  const pushSens = useDebounced(async (v: number) => {
+    setS(await setTouchpad(true, "relative", true, v));
+  }, 300);
 
   const pushLed = useDebounced(async (cfg: LedCfg) => {
     setS(await setLed(cfg.enabled, cfg.effect, cfg.color, cfg.brightness, cfg.speed));
@@ -190,6 +206,12 @@ function Content() {
           />
         </PanelSectionRow>
       </PanelSection>
+
+      <PerformanceSection
+        perf={s.perf}
+        cfg={s.settings.perf ?? { boost: null, epp: null, gpu_max: null }}
+        onState={setS}
+      />
 
       <PanelSection title={t("leds")}>
         {s.led.available && led ? (
@@ -293,7 +315,7 @@ function Content() {
                 label={t("touchpadOn")}
                 checked={!!s.touchpad.enabled}
                 onChange={async (on) =>
-                  setS(await setTouchpad(on, s.touchpad.mode ?? "absolute"))
+                  setS(await setTouchpad(on, s.touchpad.mode ?? "relative", true, sens))
                 }
               />
             </PanelSectionRow>
@@ -306,9 +328,28 @@ function Content() {
                   label: m === "relative" ? t("tpRelative") : t("tpAbsolute"),
                 }))}
                 selectedOption={s.touchpad.mode}
-                onChange={async (o) => setS(await setTouchpad(!!s.touchpad.enabled, o.data))}
+                onChange={async (o) =>
+                  setS(await setTouchpad(!!s.touchpad.enabled, o.data, true, sens))
+                }
               />
             </PanelSectionRow>
+            {s.touchpad.mode === "relative" && (
+              <PanelSectionRow>
+                <SliderField
+                  label={t("sensitivity")}
+                  description={s.touchpad.bridge ? t("bridgeOn") : t("bridgeOff")}
+                  value={sens}
+                  min={0.2}
+                  max={4}
+                  step={0.1}
+                  showValue
+                  onChange={(v) => {
+                    setSens(v);
+                    pushSens(v);
+                  }}
+                />
+              </PanelSectionRow>
+            )}
           </>
         ) : (
           <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>

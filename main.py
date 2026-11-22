@@ -6,7 +6,9 @@ expose for the Lenovo Legion Go S:
 * ``hid-lenovo-go-s``  → stick RGB rings (LED class) and touchpad settings.
 * ``ideapad_laptop``   → battery ``charge_types`` (Fast / Standard / Long_Life).
 
-No hidraw access, so it coexists with InputPlumber.
+The only hidraw access is a read-only touchpad bridge (see
+``py_modules/touchpad_bridge.py``); hidraw supports several readers, so it
+coexists with InputPlumber.
 """
 
 import asyncio
@@ -16,6 +18,8 @@ import os
 import subprocess
 
 import decky
+from performance import Performance
+from touchpad_bridge import TouchpadBridge
 
 LED_GLOB = "/sys/class/leds/go_s:rgb:joystick_rings"
 BAT_GLOB = "/sys/class/power_supply/BAT*"
@@ -32,7 +36,11 @@ DEFAULTS = {
     "charge_mode": None,  # None = don't touch what the firmware has
     "server_mode": False,
     "led": None,  # None = don't touch; otherwise dict, see set_led
-    "touchpad": {"enabled": True, "mode": "relative"},  # absolute mode sends no data on some units
+    # Absolute mode sends no data on some units, and nothing consumes the
+    # relative report, hence the bridge (see py_modules/touchpad_bridge.py).
+    "touchpad": {"enabled": True, "mode": "relative", "bridge": True, "sensitivity": 1.0},
+    # None in any key = leave that knob to Steam / the system.
+    "perf": {"boost": None, "epp": None, "gpu_max": None},
 }
 
 
@@ -115,6 +123,8 @@ def _set_sleep_masked(masked):
 
 class Plugin:
     settings = dict(DEFAULTS)
+    bridge = None
+    perf = None
 
     # ------------------------------------------------------------ persistence
     def _settings_path(self):
@@ -124,6 +134,9 @@ class Plugin:
         try:
             with open(self._settings_path()) as f:
                 self.settings = {**DEFAULTS, **json.load(f)}
+            self.settings["perf"] = {**DEFAULTS["perf"], **(self.settings.get("perf") or {})}
+            if self.settings.get("touchpad") is not None:
+                self.settings["touchpad"] = {**DEFAULTS["touchpad"], **self.settings["touchpad"]}
         except (OSError, ValueError):
             self.settings = dict(DEFAULTS)
 
@@ -163,14 +176,27 @@ class Plugin:
         tp = os.path.join(hid, "touchpad")
         _write(os.path.join(tp, "linux_mode"), cfg["mode"])
         _write(os.path.join(tp, "enabled"), "true" if cfg["enabled"] else "false")
+        want = cfg["enabled"] and cfg["mode"] == "relative" and cfg.get("bridge", True)
+        if self.bridge is None:
+            self.bridge = TouchpadBridge(decky.logger)
+        self.bridge.sensitivity = float(cfg.get("sensitivity", 1.0))
+        if want and not self.bridge.running:
+            self.bridge.start()
+        elif not want and self.bridge.running:
+            self.bridge.stop()
 
     def _apply_server(self):
         want = bool(self.settings.get("server_mode"))
         if _sleep_masked() != want:
             _set_sleep_masked(want)
 
+    def _apply_perf(self):
+        if self.perf is None:
+            self.perf = Performance(decky.logger)
+        self.perf.apply(self.settings.get("perf"))
+
     def _apply_all(self):
-        for fn in (self._apply_charge, self._apply_led, self._apply_touchpad, self._apply_server):
+        for fn in (self._apply_charge, self._apply_led, self._apply_touchpad, self._apply_server, self._apply_perf):
             try:
                 fn()
             except Exception as e:  # never let one subsystem break the others
@@ -222,11 +248,16 @@ class Plugin:
                 "enabled": _read(os.path.join(tp, "enabled")) == "true",
                 "mode": _read(os.path.join(tp, "linux_mode")),
                 "modes": _split_index(os.path.join(tp, "linux_mode_index")),
+                "bridge": bool(self.bridge and self.bridge.running),
+                "bridge_hidraw": self.bridge.hidraw if self.bridge else None,
             }
         else:
             state["touchpad"] = {"available": False}
 
         state["server"] = {"sleep_blocked": _sleep_masked()}
+        if self.perf is None:
+            self.perf = Performance(decky.logger)
+        state["perf"] = self.perf.state()
         return state
 
     async def set_charge_mode(self, mode):
@@ -253,8 +284,31 @@ class Plugin:
         self._apply_led()
         return await self.get_state()
 
-    async def set_touchpad(self, enabled, mode):
-        self.settings["touchpad"] = {"enabled": bool(enabled), "mode": str(mode)}
+    async def set_perf(self, boost=None, epp=None, gpu_max=None):
+        old = self.settings.get("perf") or {}
+        self.settings["perf"] = {
+            "boost": None if boost is None else bool(boost),
+            "epp": epp or None,
+            "gpu_max": int(gpu_max) if gpu_max else None,
+        }
+        self._save()
+        new = self.settings["perf"]
+        if old.get("gpu_max") and not new["gpu_max"]:
+            self.perf.release_gpu()
+        self.perf.release_cpu(
+            old.get("boost") is not None and new["boost"] is None,
+            bool(old.get("epp")) and not new["epp"],
+        )
+        self._apply_perf()
+        return await self.get_state()
+
+    async def set_touchpad(self, enabled, mode, bridge=True, sensitivity=1.0):
+        self.settings["touchpad"] = {
+            "enabled": bool(enabled),
+            "mode": str(mode),
+            "bridge": bool(bridge),
+            "sensitivity": max(0.2, min(4.0, float(sensitivity))),
+        }
         self._save()
         self._apply_touchpad()
         return await self.get_state()
@@ -277,6 +331,8 @@ class Plugin:
         task = getattr(self, "_task", None)
         if task:
             task.cancel()
+        if self.bridge:
+            self.bridge.stop()
         # Never leave the machine unable to sleep once the plugin is gone.
         if _sleep_masked():
             _set_sleep_masked(False)
