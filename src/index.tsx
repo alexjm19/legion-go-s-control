@@ -1,0 +1,326 @@
+import {
+  ButtonItem,
+  DropdownItem,
+  Field,
+  Focusable,
+  PanelSection,
+  PanelSectionRow,
+  SliderField,
+  ToggleField,
+  staticClasses,
+} from "@decky/ui";
+import { callable, definePlugin } from "@decky/api";
+import { useEffect, useRef, useState } from "react";
+import { FaGamepad } from "react-icons/fa";
+import { t } from "./i18n";
+
+type Rgb = [number, number, number];
+
+interface LedCfg {
+  enabled: boolean;
+  effect: string;
+  color: Rgb;
+  brightness: number;
+  speed: number;
+}
+
+interface State {
+  settings: { charge_mode: string | null; server_mode: boolean };
+  battery: {
+    available: boolean;
+    mode?: string;
+    modes?: string[];
+    capacity?: number;
+    status?: string;
+    power_w?: number | null;
+    ac?: boolean | null;
+  };
+  led: { available: boolean; effects?: string[] } & Partial<LedCfg>;
+  touchpad: { available: boolean; enabled?: boolean; mode?: string; modes?: string[] };
+  server: { sleep_blocked: boolean };
+}
+
+const getState = callable<[], State>("get_state");
+const setChargeMode = callable<[mode: string], State>("set_charge_mode");
+const setServerMode = callable<[enabled: boolean], State>("set_server_mode");
+const setLed = callable<
+  [enabled: boolean, effect: string, color: Rgb, brightness: number, speed: number],
+  State
+>("set_led");
+const setTouchpad = callable<[enabled: boolean, mode: string], State>("set_touchpad");
+
+// Presets use the driver's 0-100 per-channel scale.
+const PRESETS: { name: string; color: Rgb }[] = [
+  { name: "⚪", color: [100, 100, 100] },
+  { name: "🔴", color: [100, 0, 0] },
+  { name: "🟠", color: [100, 35, 0] },
+  { name: "🟡", color: [100, 80, 0] },
+  { name: "🟢", color: [0, 100, 0] },
+  { name: "🔵", color: [0, 60, 100] },
+  { name: "🟣", color: [60, 0, 100] },
+  { name: "🩷", color: [100, 10, 60] },
+];
+
+const CHARGE_LABEL: Record<string, () => string> = {
+  Long_Life: () => t("chargeLongLife"),
+  Standard: () => t("chargeStandard"),
+  Fast: () => t("chargeFast"),
+};
+
+const EFFECT_LABEL: Record<string, () => string> = {
+  monocolor: () => t("effectMono"),
+  breathe: () => t("effectBreathe"),
+  chroma: () => t("effectChroma"),
+  rainbow: () => t("effectRainbow"),
+};
+
+function useDebounced<A extends unknown[]>(fn: (...a: A) => void, ms: number) {
+  const timer = useRef<number | undefined>(undefined);
+  return (...a: A) => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => fn(...a), ms);
+  };
+}
+
+function Swatch({ color }: { color: Rgb }) {
+  const css = `rgb(${color.map((c) => Math.round(c * 2.55)).join(",")})`;
+  return (
+    <div
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        background: css,
+        border: "2px solid rgba(255,255,255,0.4)",
+      }}
+    />
+  );
+}
+
+function Content() {
+  const [s, setS] = useState<State | null>(null);
+  const [led, setLedLocal] = useState<LedCfg | null>(null);
+
+  const refresh = async () => {
+    const st = await getState();
+    setS(st);
+    if (st.led.available) {
+      setLedLocal({
+        enabled: !!st.led.enabled,
+        effect: st.led.effect ?? "monocolor",
+        color: (st.led.color as Rgb) ?? [0, 60, 100],
+        brightness: st.led.brightness ?? 80,
+        speed: st.led.speed ?? 50,
+      });
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+    const id = window.setInterval(async () => setS(await getState()), 5000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const pushLed = useDebounced(async (cfg: LedCfg) => {
+    setS(await setLed(cfg.enabled, cfg.effect, cfg.color, cfg.brightness, cfg.speed));
+  }, 250);
+
+  const updateLed = (patch: Partial<LedCfg>) => {
+    if (!led) return;
+    const next = { ...led, ...patch };
+    setLedLocal(next);
+    pushLed(next);
+  };
+
+  if (!s) {
+    return (
+      <PanelSection>
+        <PanelSectionRow>{t("loading")}</PanelSectionRow>
+      </PanelSection>
+    );
+  }
+
+  const b = s.battery;
+  const statusLine = b.available
+    ? `${b.capacity}% · ${t("status_" + (b.status ?? "Unknown"))}` +
+      (b.power_w != null ? ` · ${b.power_w} W` : "") +
+      (b.ac ? ` · ${t("plugged")}` : "")
+    : "";
+
+  return (
+    <>
+      <PanelSection title={t("battery")}>
+        {b.available ? (
+          <>
+            <PanelSectionRow>
+              <Field label={statusLine} bottomSeparator="none" />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <ToggleField
+                label={t("chargeLimit")}
+                description={t("chargeLimitDesc")}
+                checked={b.mode === "Long_Life"}
+                onChange={async (on) => setS(await setChargeMode(on ? "Long_Life" : "Standard"))}
+              />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <DropdownItem
+                label={t("chargeMode")}
+                rgOptions={(b.modes ?? []).map((m) => ({
+                  data: m,
+                  label: CHARGE_LABEL[m]?.() ?? m,
+                }))}
+                selectedOption={b.mode}
+                onChange={async (o) => setS(await setChargeMode(o.data))}
+              />
+            </PanelSectionRow>
+          </>
+        ) : (
+          <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>
+        )}
+      </PanelSection>
+
+      <PanelSection title={t("server")}>
+        <PanelSectionRow>
+          <ToggleField
+            label={t("serverMode")}
+            description={s.server.sleep_blocked ? t("serverOnDesc") : t("serverOffDesc")}
+            checked={s.settings.server_mode}
+            onChange={async (on) => setS(await setServerMode(on))}
+          />
+        </PanelSectionRow>
+      </PanelSection>
+
+      <PanelSection title={t("leds")}>
+        {s.led.available && led ? (
+          <>
+            <PanelSectionRow>
+              <ToggleField
+                label={t("ledsOn")}
+                checked={led.enabled}
+                onChange={(on) => updateLed({ enabled: on })}
+              />
+            </PanelSectionRow>
+            {led.enabled && (
+              <>
+                <PanelSectionRow>
+                  <DropdownItem
+                    label={t("effect")}
+                    rgOptions={(s.led.effects ?? []).map((e) => ({
+                      data: e,
+                      label: EFFECT_LABEL[e]?.() ?? e,
+                    }))}
+                    selectedOption={led.effect}
+                    onChange={(o) => updateLed({ effect: o.data })}
+                  />
+                </PanelSectionRow>
+                <PanelSectionRow>
+                  <Field label={t("color")} bottomSeparator="none">
+                    <Swatch color={led.color} />
+                  </Field>
+                </PanelSectionRow>
+                <PanelSectionRow>
+                  <Focusable
+                    flow-children="horizontal"
+                    style={{ display: "flex", flexWrap: "wrap", gap: 4 }}
+                  >
+                    {PRESETS.map((p) => (
+                      <ButtonItem
+                        key={p.name}
+                        layout="inline"
+                        bottomSeparator="none"
+                        onClick={() => updateLed({ color: p.color })}
+                      >
+                        {p.name}
+                      </ButtonItem>
+                    ))}
+                  </Focusable>
+                </PanelSectionRow>
+                {(["red", "green", "blue"] as const).map((ch, i) => (
+                  <PanelSectionRow key={ch}>
+                    <SliderField
+                      label={t(ch)}
+                      value={led.color[i]}
+                      min={0}
+                      max={100}
+                      step={1}
+                      showValue
+                      onChange={(v) => {
+                        const c = [...led.color] as Rgb;
+                        c[i] = v;
+                        updateLed({ color: c });
+                      }}
+                    />
+                  </PanelSectionRow>
+                ))}
+                <PanelSectionRow>
+                  <SliderField
+                    label={t("brightness")}
+                    value={led.brightness}
+                    min={0}
+                    max={100}
+                    step={5}
+                    showValue
+                    onChange={(v) => updateLed({ brightness: v })}
+                  />
+                </PanelSectionRow>
+                {led.effect !== "monocolor" && (
+                  <PanelSectionRow>
+                    <SliderField
+                      label={t("speed")}
+                      value={led.speed}
+                      min={0}
+                      max={100}
+                      step={5}
+                      showValue
+                      onChange={(v) => updateLed({ speed: v })}
+                    />
+                  </PanelSectionRow>
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>
+        )}
+      </PanelSection>
+
+      <PanelSection title={t("touchpad")}>
+        {s.touchpad.available ? (
+          <>
+            <PanelSectionRow>
+              <ToggleField
+                label={t("touchpadOn")}
+                checked={!!s.touchpad.enabled}
+                onChange={async (on) =>
+                  setS(await setTouchpad(on, s.touchpad.mode ?? "absolute"))
+                }
+              />
+            </PanelSectionRow>
+            <PanelSectionRow>
+              <DropdownItem
+                label={t("touchpadMode")}
+                description={t("touchpadModeDesc")}
+                rgOptions={(s.touchpad.modes ?? []).map((m) => ({
+                  data: m,
+                  label: m === "relative" ? t("tpRelative") : t("tpAbsolute"),
+                }))}
+                selectedOption={s.touchpad.mode}
+                onChange={async (o) => setS(await setTouchpad(!!s.touchpad.enabled, o.data))}
+              />
+            </PanelSectionRow>
+          </>
+        ) : (
+          <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>
+        )}
+      </PanelSection>
+    </>
+  );
+}
+
+export default definePlugin(() => ({
+  name: "Legion Go S Control",
+  titleView: <div className={staticClasses.Title}>Legion Go S Control</div>,
+  content: <Content />,
+  icon: <FaGamepad />,
+}));
