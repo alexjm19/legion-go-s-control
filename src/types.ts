@@ -30,6 +30,7 @@ export interface FanState {
   temperatures?: number[];
   min?: number[];
   max?: number;
+  enforce_min?: boolean;
 }
 
 export interface LedCfg {

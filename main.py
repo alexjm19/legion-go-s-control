@@ -215,13 +215,17 @@ class Plugin:
         if not cfg:
             return
         points = cfg.get("points") if isinstance(cfg, dict) else cfg
+        enforce = cfg.get("enforce_min", True) if isinstance(cfg, dict) else True
         if self.fan is None:
             self.fan = FanCurve(decky.logger)
-        applied = self.fan.apply(points)
+        applied = self.fan.apply(points, enforce_min=bool(enforce))
         if applied:
             # Keep the sanitized curve in memory so the UI and the next set
             # agree with what the firmware accepted.
-            self.settings["fan_curve"] = {"points": applied}
+            self.settings["fan_curve"] = {
+                "points": applied,
+                "enforce_min": bool(enforce),
+            }
 
     def _apply_all(self, apply_tdp=True):
         for fn in (
@@ -303,6 +307,10 @@ class Plugin:
         if self.fan is None:
             self.fan = FanCurve(decky.logger)
         state["fan_curve"] = self.fan.state()
+        cfg = self.settings.get("fan_curve")
+        state["fan_curve"]["enforce_min"] = (
+            bool(cfg.get("enforce_min", True)) if isinstance(cfg, dict) else True
+        )
 
         state["server"] = {"sleep_blocked": _sleep_masked()}
         if self.perf is None:
@@ -340,7 +348,7 @@ class Plugin:
         self._apply_power_led()
         return await self.get_state()
 
-    async def set_fan_curve(self, points):
+    async def set_fan_curve(self, points, enforce_min=True):
         if not points:
             self.settings["fan_curve"] = None
             self._save()
@@ -350,9 +358,12 @@ class Plugin:
             return await self.get_state()
         if self.fan is None:
             self.fan = FanCurve(decky.logger)
-        applied = self.fan.apply(points)
+        applied = self.fan.apply(points, enforce_min=bool(enforce_min))
         if applied:
-            self.settings["fan_curve"] = {"points": applied}
+            self.settings["fan_curve"] = {
+                "points": applied,
+                "enforce_min": bool(enforce_min),
+            }
             self._save()
         return await self.get_state()
 

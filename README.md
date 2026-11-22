@@ -8,7 +8,7 @@ A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin for t
 |---|---|
 | **Battery** | One toggle for **80 % protection**. It charges slowly up to 80 %, then the device runs from the charger (bypass). You can also pick Standard or Fast charging. |
 | **Server mode** | Stops the device from sleeping (idle or power button) so game servers, media servers and other services keep running. |
-| **Performance** | CPU boost, EPP, GPU clock cap, a **TDP slider** (PL1 = PL2 = PL3, custom platform profile) and a **10-point fan curve** with manufacturer safety minimums. |
+| **Performance** | CPU boost, EPP, GPU clock cap, a **TDP slider** (PL1 = PL2 = PL3, custom platform profile) and a **10-point fan curve**. Safety minimums are on by default and can be disabled after a confirmation (then only 90 °C → 100 % is enforced). |
 | **Power button LED** | Turns the power-button LED on or off. Turning it off also stops the breathing effect while asleep. |
 | **Stick LEDs** | On/off, effect (solid, breathe, chroma, rainbow), colour (presets + RGB), brightness and speed. |
 | **Touchpad** | Enable/disable it and switch between *relative* (plain mouse) and *absolute* (Steam trackpad) modes. |
@@ -53,6 +53,10 @@ scp out/*.zip deck@handheld:/tmp/          # then install it from Decky (Develop
 - The fan-curve table is written to the same EC shared-memory window that Lenovo's firmware `WMAB` method uses: ten values for 10..100 °C and a commit bit. The plugin enforces hhd's minimum safe curve and a non-decreasing curve, so a point cannot leave the fan below a safe speed. "Restore factory curve" writes an empty table and clears the commit bit, which returns control to the firmware. On uninstall the factory table is restored.
 - The power-button LED is not a Linux LED-class device; it is an EC register. The plugin controls it only on a Legion Go S (DMI 83L3/83N6/83Q2/83Q3), through the official WMI method when `acpi_call` is loaded and through EC MMIO otherwise. Turning it off also disables the sleep breathing. On uninstall the LED is turned back on.
 - Server mode does not keep the screen on. Steam still dims and turns off the screen; it just can't put the device to sleep.
+
+## Fan-curve disclaimer
+
+The fan curve is a firmware/EC setting. By default the plugin enforces Lenovo's minimum safe curve (the same values hhd uses) and a non-decreasing table. You can disable those minimums from the plugin after confirming a destructive-action warning; from then on **only the 90 °C → 100 % guard is enforced**. Custom curves are used entirely at your own risk: running the fan too low can overheat, throttle or damage the device, and the author is not responsible for any damage. Use **Apply safe minimum** or **Restore factory curve** if in doubt.
 
 ## License
 

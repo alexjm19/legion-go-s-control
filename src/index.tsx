@@ -55,6 +55,30 @@ const EFFECT_LABEL: Record<string, () => string> = {
   rainbow: () => t("effectRainbow"),
 };
 
+const CATEGORIES = [
+  { id: "energy", label: "categoryEnergy" },
+  { id: "cooling", label: "categoryCooling" },
+  { id: "lighting", label: "categoryLighting" },
+  { id: "input", label: "categoryInput" },
+  { id: "system", label: "categorySystem" },
+] as const;
+
+type Category = (typeof CATEGORIES)[number]["id"];
+const CATEGORY_KEY = "legion-go-s-control-category";
+
+function isCategory(value: string | null): value is Category {
+  return value !== null && CATEGORIES.some((c) => c.id === value);
+}
+
+function initialCategory(): Category {
+  try {
+    const stored = window.localStorage.getItem(CATEGORY_KEY);
+    return isCategory(stored) ? stored : "energy";
+  } catch {
+    return "energy";
+  }
+}
+
 function useDebounced<A extends unknown[]>(fn: (...a: A) => void, ms: number) {
   const timer = useRef<number | undefined>(undefined);
   return (...a: A) => {
@@ -81,6 +105,17 @@ function Swatch({ color }: { color: Rgb }) {
 function Content() {
   const [s, setS] = useState<State | null>(null);
   const [led, setLedLocal] = useState<LedCfg | null>(null);
+  const [category, setCategory] = useState<Category>(initialCategory);
+
+  const selectCategory = (id: string) => {
+    if (!isCategory(id)) return;
+    setCategory(id);
+    try {
+      window.localStorage.setItem(CATEGORY_KEY, id);
+    } catch {
+      // localStorage can be unavailable; the default category still works.
+    }
+  };
 
   const refresh = async () => {
     const st = await getState();
@@ -136,7 +171,29 @@ function Content() {
 
   return (
     <>
-      <PanelSection title={t("battery")}>
+      <PanelSection>
+        <PanelSectionRow>
+          <Focusable
+            flow-children="horizontal"
+            style={{ display: "flex", flexWrap: "wrap", gap: 4 }}
+          >
+            {CATEGORIES.map((c) => (
+              <ButtonItem
+                key={c.id}
+                layout="inline"
+                bottomSeparator="none"
+                onClick={() => selectCategory(c.id)}
+              >
+                {category === c.id ? `● ${t(c.label)}` : t(c.label)}
+              </ButtonItem>
+            ))}
+          </Focusable>
+        </PanelSectionRow>
+      </PanelSection>
+
+      {category === "energy" && (
+        <>
+          <PanelSection title={t("battery")}>
         {b.available ? (
           <>
             <PanelSectionRow>
@@ -167,26 +224,19 @@ function Content() {
         )}
       </PanelSection>
 
-      <PanelSection title={t("server")}>
-        <PanelSectionRow>
-          <ToggleField
-            label={t("serverMode")}
-            description={s.server.sleep_blocked ? t("serverOnDesc") : t("serverOffDesc")}
-            checked={s.settings.server_mode}
-            onChange={async (on) => setS(await setServerMode(on))}
+          <PerformanceSection
+            perf={s.perf}
+            cfg={s.settings.perf ?? { boost: null, epp: null, gpu_max: null, tdp: null }}
+            onState={setS}
           />
-        </PanelSectionRow>
-      </PanelSection>
+        </>
+      )}
 
-      <PerformanceSection
-        perf={s.perf}
-        cfg={s.settings.perf ?? { boost: null, epp: null, gpu_max: null, tdp: null }}
-        onState={setS}
-      />
+      {category === "cooling" && <FanCurveSection fan={s.fan_curve} onState={setS} />}
 
-      <FanCurveSection fan={s.fan_curve} onState={setS} />
-
-      <PanelSection title={t("powerLed")}>
+      {category === "lighting" && (
+        <>
+          <PanelSection title={t("powerLed")}>
         {s.power_led.available ? (
           <PanelSectionRow>
             <ToggleField
@@ -293,9 +343,12 @@ function Content() {
         ) : (
           <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>
         )}
-      </PanelSection>
+          </PanelSection>
+        </>
+      )}
 
-      <PanelSection title={t("touchpad")}>
+      {category === "input" && (
+        <PanelSection title={t("touchpad")}>
         {s.touchpad.available ? (
           <>
             <PanelSectionRow>
@@ -342,7 +395,21 @@ function Content() {
         ) : (
           <PanelSectionRow>{t("notAvailable")}</PanelSectionRow>
         )}
-      </PanelSection>
+        </PanelSection>
+      )}
+
+      {category === "system" && (
+        <PanelSection title={t("server")}>
+          <PanelSectionRow>
+            <ToggleField
+              label={t("serverMode")}
+              description={s.server.sleep_blocked ? t("serverOnDesc") : t("serverOffDesc")}
+              checked={s.settings.server_mode}
+              onChange={async (on) => setS(await setServerMode(on))}
+            />
+          </PanelSectionRow>
+        </PanelSection>
+      )}
     </>
   );
 }

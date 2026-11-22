@@ -121,8 +121,14 @@ class FanCurve:
 
     # ------------------------------------------------------------- apply
     @staticmethod
-    def sanitize(points):
-        """Enforce length, range, safety minimum and monotonic increase."""
+    def sanitize(points, enforce_min=True):
+        """Validate the curve.
+
+        With ``enforce_min`` the firmware's minimum safe curve and a
+        non-decreasing table are enforced. Without it the user is free to set
+        any 0..100 value for 10..80 °C; the 90 °C and 100 °C points are always
+        forced to 100 %, so the fan goes to maximum at 90 °C.
+        """
         if not points or len(points) != POINTS:
             return None
         try:
@@ -131,14 +137,19 @@ class FanCurve:
             return None
         result, previous = [], 0
         for i, value in enumerate(values):
-            value = max(MIN_CURVE[i], min(MAX_VALUE, value))
-            value = max(previous, value)
+            if enforce_min:
+                value = max(MIN_CURVE[i], min(MAX_VALUE, value))
+                value = max(previous, value)
+            else:
+                value = max(0, min(MAX_VALUE, value))
+                if i >= 8:
+                    value = MAX_VALUE
             result.append(value)
             previous = value
         return result
 
-    def apply(self, points):
-        values = self.sanitize(points)
+    def apply(self, points, enforce_min=True):
+        values = self.sanitize(points, enforce_min)
         if values is None:
             self.log.warning("fan curve: invalid curve, not writing")
             return None
@@ -154,7 +165,8 @@ class FanCurve:
         if readback != values or not self._active():
             self.log.error(f"fan curve: write did not stick (read {readback})")
             return None
-        self.log.info(f"fan curve: applied {values}")
+        mode = "safe minimums" if enforce_min else "no minimums, 90 °C = 100 %"
+        self.log.info(f"fan curve: applied {values} ({mode})")
         return values
 
     def reset(self):
