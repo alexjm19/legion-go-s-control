@@ -21,6 +21,7 @@ import decky
 from fan_curve import FanCurve
 from performance import Performance
 from power_led import PowerLED
+from server_services import ServerServices
 from touchpad_bridge import TouchpadBridge
 
 LED_GLOB = "/sys/class/leds/go_s:rgb:joystick_rings"
@@ -45,6 +46,13 @@ DEFAULTS = {
     "touchpad": {"enabled": True, "mode": "relative", "bridge": True, "sensitivity": 1.0},
     # None in any key = leave that knob to Steam / the system.
     "perf": {"boost": None, "epp": None, "gpu_max": None, "tdp": None},
+    # Background services tied to server mode (see py_modules/server_services.py).
+    # Entries that do not exist on this system are ignored.
+    "services": {
+        "units": ["hermes.service"],
+        "users": ["hermes-ops"],
+        "pause_in_game": True,
+    },
 }
 
 
@@ -131,6 +139,7 @@ class Plugin:
     perf = None
     power_led = None
     fan = None
+    services = None
 
     # ------------------------------------------------------------ persistence
     def _settings_path(self):
@@ -141,6 +150,9 @@ class Plugin:
             with open(self._settings_path()) as f:
                 self.settings = {**DEFAULTS, **json.load(f)}
             self.settings["perf"] = {**DEFAULTS["perf"], **(self.settings.get("perf") or {})}
+            self.settings["services"] = {
+                **DEFAULTS["services"], **(self.settings.get("services") or {})
+            }
             if self.settings.get("touchpad") is not None:
                 self.settings["touchpad"] = {**DEFAULTS["touchpad"], **self.settings["touchpad"]}
         except (OSError, ValueError):
@@ -191,10 +203,13 @@ class Plugin:
         elif not want and self.bridge.running:
             self.bridge.stop()
 
-    def _apply_server(self):
+    def _apply_server(self, start=False):
         want = bool(self.settings.get("server_mode"))
         if _sleep_masked() != want:
             _set_sleep_masked(want)
+        if self.services is None:
+            self.services = ServerServices(decky.logger)
+        self.services.apply(self.settings.get("services"), want, start=start)
 
     def _apply_perf(self, apply_tdp=True):
         if self.perf is None:
@@ -313,6 +328,9 @@ class Plugin:
         )
 
         state["server"] = {"sleep_blocked": _sleep_masked()}
+        if self.services is None:
+            self.services = ServerServices(decky.logger)
+        state["services"] = self.services.state(self.settings.get("services"))
         if self.perf is None:
             self.perf = Performance(decky.logger)
         state["perf"] = self.perf.state()
@@ -327,8 +345,30 @@ class Plugin:
     async def set_server_mode(self, enabled):
         self.settings["server_mode"] = bool(enabled)
         self._save()
+        self._apply_server(start=True)
+        return await self.get_state()
+
+    async def set_pause_in_game(self, enabled):
+        self.settings["services"] = {
+            **(self.settings.get("services") or DEFAULTS["services"]),
+            "pause_in_game": bool(enabled),
+        }
+        self._save()
         self._apply_server()
         return await self.get_state()
+
+    async def set_game_running(self, running):
+        """Called by the frontend on every app launch/exit."""
+        if self.services is None:
+            self.services = ServerServices(decky.logger)
+        running = bool(running)
+        if running != self.services.game_running:
+            self.services.game_running = running
+            try:
+                self._apply_server()
+            except Exception as e:
+                decky.logger.exception(f"set_game_running: {e}")
+        return running
 
     async def set_led(self, enabled, effect, color, brightness, speed):
         self.settings["led"] = {
@@ -411,6 +451,11 @@ class Plugin:
         decky.logger.info(f"Legion Go S Control loaded: {self.settings}")
         self._apply_all()
         try:
+            # Boot or plugin reload: start what server mode wants running.
+            self._apply_server(start=True)
+        except Exception as e:
+            decky.logger.exception(f"_apply_server: {e}")
+        try:
             self._apply_fan_curve()
         except Exception as e:
             decky.logger.exception(f"_apply_fan_curve: {e}")
@@ -431,6 +476,9 @@ class Plugin:
         # Never leave the machine unable to sleep once the plugin is gone.
         if _sleep_masked():
             _set_sleep_masked(False)
+        # Nor services frozen with nobody left to thaw them.
+        if self.services:
+            self.services.thaw_all(self.settings.get("services"))
 
     async def _uninstall(self):
         if _sleep_masked():

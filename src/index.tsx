@@ -5,6 +5,7 @@ import {
   Focusable,
   PanelSection,
   PanelSectionRow,
+  Router,
   SliderField,
   ToggleField,
   staticClasses,
@@ -21,6 +22,40 @@ const getState = callable<[], State>("get_state");
 const setChargeMode = callable<[mode: string], State>("set_charge_mode");
 const setServerMode = callable<[enabled: boolean], State>("set_server_mode");
 const setPowerLed = callable<[enabled: boolean], State>("set_power_led");
+const setPauseInGame = callable<[enabled: boolean], State>("set_pause_in_game");
+const setGameRunning = callable<[running: boolean], boolean>("set_game_running");
+
+function svcLabel(i: State["services"]["items"][number]): string {
+  if (i.frozen) return t("svcPaused");
+  if (i.active === "active" || i.active === "reloading") return t("svcActive");
+  if (i.active === "activating") return t("svcStarting");
+  if (i.active === "failed") return t("svcFailed");
+  return t("svcStopped");
+}
+
+// Track running apps globally (not only while the panel is open) so services
+// are frozen during a game and thawed when it exits.
+function watchGames(): () => void {
+  const running = new Set<number>();
+  try {
+    for (const app of Router.RunningApps ?? []) running.add(app.appid);
+  } catch {
+    // Router can be unavailable very early; notifications still work.
+  }
+  const report = () => {
+    setGameRunning(running.size > 0).catch(() => undefined);
+  };
+  const reg = SteamClient.GameSessions.RegisterForAppLifetimeNotifications((n) => {
+    if (n.bRunning) running.add(n.unAppID);
+    else running.delete(n.unAppID);
+    report();
+  });
+  report();
+  return () => {
+    reg.unregister();
+    setGameRunning(false).catch(() => undefined);
+  };
+}
 const setLed = callable<
   [enabled: boolean, effect: string, color: Rgb, brightness: number, speed: number],
   State
@@ -408,15 +443,40 @@ function Content() {
               onChange={async (on) => setS(await setServerMode(on))}
             />
           </PanelSectionRow>
+          {s.services?.available && (
+            <>
+              <PanelSectionRow>
+                <Field label={t("services")} focusable={false}>
+                  {s.services.items.map((i) => `${i.label}: ${svcLabel(i)}`).join(" · ")}
+                </Field>
+              </PanelSectionRow>
+              <PanelSectionRow>
+                <ToggleField
+                  label={t("pauseInGame")}
+                  description={
+                    s.services.game_running && s.services.pause_in_game && s.settings.server_mode
+                      ? t("gameRunning")
+                      : t("pauseInGameDesc")
+                  }
+                  checked={s.services.pause_in_game}
+                  onChange={async (on) => setS(await setPauseInGame(on))}
+                />
+              </PanelSectionRow>
+            </>
+          )}
         </PanelSection>
       )}
     </>
   );
 }
 
-export default definePlugin(() => ({
-  name: "Legion Go S Control",
-  titleView: <div className={staticClasses.Title}>Legion Go S Control</div>,
-  content: <Content />,
-  icon: <FaGamepad />,
-}));
+export default definePlugin(() => {
+  const stopWatching = watchGames();
+  return {
+    name: "Legion Go S Control",
+    titleView: <div className={staticClasses.Title}>Legion Go S Control</div>,
+    content: <Content />,
+    icon: <FaGamepad />,
+    onDismount: stopWatching,
+  };
+});

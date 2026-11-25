@@ -75,5 +75,11 @@ export interface State {
     bridge?: boolean;
   };
   server: { sleep_blocked: boolean };
+  services: {
+    available: boolean;
+    items: { unit: string; label: string; active: string; frozen: boolean }[];
+    game_running: boolean;
+    pause_in_game: boolean;
+  };
   perf: PerfState;
 }

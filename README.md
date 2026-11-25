@@ -7,7 +7,7 @@ A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin for t
 | Section | What it does |
 |---|---|
 | **Battery** | One toggle for **80 % protection**. It charges slowly up to 80 %, then the device runs from the charger (bypass). You can also pick Standard or Fast charging. |
-| **Server mode** | Stops the device from sleeping (idle or power button) so game servers, media servers and other services keep running. |
+| **Server mode** | Stops the device from sleeping (idle or power button) so game servers, media servers and other services keep running. Optionally also starts/stops a list of background services with it, and **pauses them while a game is open** so games get the whole CPU. |
 | **Performance** | CPU boost, EPP, GPU clock cap, a **TDP slider** (PL1 = PL2 = PL3, custom platform profile) and a **10-point fan curve**. Safety minimums are on by default and can be disabled after a confirmation (then only 90 °C → 100 % is enforced). |
 | **Power button LED** | Turns the power-button LED on or off. Turning it off also stops the breathing effect while asleep. |
 | **Stick LEDs** | On/off, effect (solid, breathe, chroma, rainbow), colour (presets + RGB), brightness and speed. |
@@ -28,6 +28,7 @@ The plugin never talks to the controller over hidraw, so it doesn't fight with I
 | LEDs | `hid-lenovo-go-s` | `/sys/class/leds/go_s:rgb:joystick_rings/` |
 | Touchpad | `hid-lenovo-go-s` | `<hid device>/touchpad/{enabled,linux_mode}` |
 | Server mode | systemd | `systemctl mask --runtime sleep.target suspend.target …` (undone automatically on reboot, when the toggle is turned off, and when the plugin is unloaded) |
+| Server services | systemd | `systemctl start/stop` with server mode and `systemctl freeze/thaw` while a game runs, for the units in `settings.json` → `services.units` and the user managers (`user@UID.service`) of `services.users`. Entries missing on the system are ignored; never left frozen when the plugin unloads. |
 
 ### Requirements
 
@@ -52,6 +53,7 @@ scp out/*.zip deck@handheld:/tmp/          # then install it from Decky (Develop
 - The TDP slider writes the same value to PL1, PL2 and PL3 and switches Lenovo's platform profile to `custom` (the same mapping other Legion TDP tools use). Steam and PowerStation can also write the TDP, so if you use Steam's slider, the last writer wins. The plugin re-applies the TDP when you change it or when it loads, not on every periodic re-apply.
 - The fan-curve table is written to the same EC shared-memory window that Lenovo's firmware `WMAB` method uses: ten values for 10..100 °C and a commit bit. The plugin enforces hhd's minimum safe curve and a non-decreasing curve, so a point cannot leave the fan below a safe speed. "Restore factory curve" writes an empty table and clears the commit bit, which returns control to the firmware. On uninstall the factory table is restored.
 - The power-button LED is not a Linux LED-class device; it is an EC register. The plugin controls it only on a Legion Go S (DMI 83L3/83N6/83Q2/83Q3), through the official WMI method when `acpi_call` is loaded and through EC MMIO otherwise. Turning it off also disables the sleep breathing. On uninstall the LED is turned back on.
+- Server services: defaults are `hermes.service` and the `hermes-ops` account (the author's setup); edit `services` in the plugin's `settings.json` (`~/homebrew/settings/legion-go-s-control/settings.json`) to list your own. Pausing freezes the processes (0 % CPU, RAM kept); turning server mode off stops them and frees the RAM.
 - Server mode does not keep the screen on. Steam still dims and turns off the screen; it just can't put the device to sleep.
 
 ## Fan-curve disclaimer
